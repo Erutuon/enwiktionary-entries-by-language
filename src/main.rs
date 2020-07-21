@@ -12,7 +12,35 @@ use unicase::UniCase;
 mod error;
 use error::{Error, Result};
 
-type LanguagesToEntries<'a> = HashMap<&'a String, Vec<UniCase<String>>>;
+// type LanguagesToEntries<'a> = HashMap<&'a String, Vec<UniCase<String>>>;
+
+struct LanguagesToEntries<'a>(HashMap<&'a str, Vec<UniCase<String>>>);
+
+impl<'a> LanguagesToEntries<'a> {
+    #[inline(always)]
+    fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    #[inline(always)]
+    fn push(&mut self, language_code: &'a str, title: &UniCase<String>) {
+        self.0
+            .entry(language_code)
+            .or_insert_with(Vec::new)
+            .push(title.clone());
+    }
+}
+
+impl<'a> IntoIterator for LanguagesToEntries<'a> {
+    type Item = (&'a str, Vec<UniCase<String>>);
+    type IntoIter =
+        <HashMap<&'a str, Vec<UniCase<String>>> as IntoIterator>::IntoIter;
+
+    #[inline(always)]
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
 
 fn check_output_dir(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
@@ -47,6 +75,11 @@ fn get_language_name_to_code(
         .collect()
 }
 
+type Namespace = u32; // should be i32
+const MAINSPACE: Namespace = 0;
+const APPENDIX_NAMESPACE: Namespace = 100;
+const RECONSTRUCTION_NAMESPACE: Namespace = 118;
+
 fn make_entry_index<'a>(
     output_dir: impl AsRef<Path>,
     pages_articles_path: impl AsRef<Path>,
@@ -59,15 +92,15 @@ fn make_entry_index<'a>(
         .map_err(|e| Error::io_error("open", pages_articles_path, e))?;
     let configuration = wiktionary_configuration();
     let dump_file = BufReader::new(dump_file);
-    let mut languages_to_entries = HashMap::new();
+    let mut languages_to_entries = LanguagesToEntries::new();
     for parse_result in parse_mediawiki_dump::parse(dump_file) {
-        if let Page {
+        let Page {
             title,
             text,
-            namespace: 0,
+            namespace,
             ..
-        } = parse_result?
-        {
+        } = parse_result?;
+        if namespace == MAINSPACE {
             let title = UniCase::new(String::from(title));
             // This only checks top-level header nodes.
             // We need to recurse if any level-2 headers are at lower levels.
@@ -80,10 +113,7 @@ fn make_entry_index<'a>(
                     if let Some(language_code) =
                         language_name_to_code.get(language_name)
                     {
-                        languages_to_entries
-                            .entry(language_code)
-                            .or_insert_with(Vec::new)
-                            .push(title.clone());
+                        languages_to_entries.push(language_code, &title);
                     } else {
                         eprintln!(
                             "language name {} in {} not recognized",
@@ -91,6 +121,26 @@ fn make_entry_index<'a>(
                         );
                     }
                 }
+            }
+        } else if namespace == APPENDIX_NAMESPACE
+            || namespace == RECONSTRUCTION_NAMESPACE
+        {
+            let title = UniCase::new(String::from(title));
+            if let Some(Some(Some(language_code))) =
+                title.split(':').nth(1).map(|title_after_namespace| {
+                    title_after_namespace.split('/').next().map(
+                        |language_name| {
+                            language_name_to_code.get(language_name)
+                        },
+                    )
+                })
+            {
+                languages_to_entries.push(language_code, &title);
+            } else if namespace == RECONSTRUCTION_NAMESPACE {
+                eprintln!(
+                    "valid language name not found in reconstruction title {}",
+                    title
+                );
             }
         }
     }
@@ -103,7 +153,7 @@ fn print_entries(
 ) -> Result<()> {
     let output_dir = output_dir.as_ref();
     for (language_code, mut entries) in languages_to_entries {
-        let mut path = output_dir.join(language_code.as_str());
+        let mut path = output_dir.join(language_code);
         path.set_extension("txt");
         let output_file = File::create(&path)
             .map_err(|e| Error::io_error("create", &path, e))?;
@@ -123,7 +173,8 @@ fn main_with_result(
     language_name_to_code_path: impl AsRef<Path>,
 ) -> Result<()> {
     let output_dir: &Path = output_dir.as_ref();
-    let language_name_to_code = get_language_name_to_code(language_name_to_code_path)?;
+    let language_name_to_code =
+        get_language_name_to_code(language_name_to_code_path)?;
     let languages_to_entries = make_entry_index(
         output_dir,
         pages_articles_path,
