@@ -19,10 +19,10 @@ pub enum Error {
 }
 
 impl Error {
-    pub fn io_error(
+    pub fn from_io(
+        cause: IoError,
         action: &'static str,
         path: impl Into<PathBuf>,
-        cause: IoError,
     ) -> Error {
         Error::IoError {
             action,

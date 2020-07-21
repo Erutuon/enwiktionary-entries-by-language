@@ -23,11 +23,11 @@ impl<'a> LanguagesToEntries<'a> {
     }
 
     #[inline(always)]
-    fn push(&mut self, language_code: &'a str, title: &UniCase<String>) {
+    fn push(&mut self, language_code: &'a str, title: &str) {
         self.0
             .entry(language_code)
             .or_insert_with(Vec::new)
-            .push(title.clone());
+            .push(UniCase::new(String::from(title)));
     }
 }
 
@@ -45,7 +45,7 @@ impl<'a> IntoIterator for LanguagesToEntries<'a> {
 fn check_output_dir(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
     std::fs::create_dir_all(&path)
-        .map_err(|e| Error::io_error("create output directory", path, e))?;
+        .map_err(|e| Error::from_io(e, "create output directory", path))?;
     Ok(())
 }
 
@@ -54,7 +54,7 @@ fn get_language_name_to_code(
 ) -> Result<HashMap<String, String>> {
     let path = path.as_ref();
     let language_name_to_code = std::fs::read_to_string(path)
-        .map_err(|e| Error::io_error("read from", path, e))?;
+        .map_err(|e| Error::from_io(e, "read from", path))?;
     language_name_to_code
         .lines()
         .enumerate()
@@ -89,7 +89,7 @@ fn make_entry_index<'a>(
     check_output_dir(output_dir)?;
     let pages_articles_path = pages_articles_path.as_ref();
     let dump_file = File::open(pages_articles_path)
-        .map_err(|e| Error::io_error("open", pages_articles_path, e))?;
+        .map_err(|e| Error::from_io(e, "open", pages_articles_path))?;
     let configuration = wiktionary_configuration();
     let dump_file = BufReader::new(dump_file);
     let mut languages_to_entries = LanguagesToEntries::new();
@@ -101,7 +101,6 @@ fn make_entry_index<'a>(
             ..
         } = parse_result?;
         if namespace == MAINSPACE {
-            let title = UniCase::new(String::from(title));
             // This only checks top-level header nodes.
             // We need to recurse if any level-2 headers are at lower levels.
             for node in configuration.parse(&text).nodes {
@@ -125,7 +124,6 @@ fn make_entry_index<'a>(
         } else if namespace == APPENDIX_NAMESPACE
             || namespace == RECONSTRUCTION_NAMESPACE
         {
-            let title = UniCase::new(String::from(title));
             if let Some(Some(Some(language_code))) =
                 title.split(':').nth(1).map(|title_after_namespace| {
                     title_after_namespace.split('/').next().map(
@@ -156,12 +154,12 @@ fn print_entries(
         let mut path = output_dir.join(language_code);
         path.set_extension("txt");
         let output_file = File::create(&path)
-            .map_err(|e| Error::io_error("create", &path, e))?;
+            .map_err(|e| Error::from_io(e, "create", &path))?;
         entries.sort();
         let mut output_file = BufWriter::new(output_file);
         for entry in entries {
             writeln!(output_file, "{}", entry)
-                .map_err(|e| Error::io_error("write to", &path, e))?;
+                .map_err(|e| Error::from_io(e, "write to", &path))?;
         }
     }
     Ok(())
