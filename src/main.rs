@@ -4,24 +4,17 @@ use smartstring::alias::String;
 use std::{
     collections::HashMap,
     fs::File,
-    hint::unreachable_unchecked,
     io::{BufReader, BufWriter, Write},
     path::Path,
-    rc::Rc,
 };
 use unicase::UniCase;
 
 mod error;
 use error::{Error, Result};
 
-macro_rules! exit_with_error {
-    ($($tt:tt)*) => ({
-        eprintln!($($tt)*);
-        ::std::process::exit(-1)
-    })
-}
+type LanguagesToEntries<'a> = HashMap<&'a String, Vec<UniCase<String>>>;
 
-fn check_output_directory(path: impl AsRef<Path>) -> Result<()> {
+fn check_output_dir(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
     std::fs::create_dir_all(&path)
         .map_err(|e| Error::io_error("create output directory", path, e))?;
@@ -30,7 +23,7 @@ fn check_output_directory(path: impl AsRef<Path>) -> Result<()> {
 
 fn get_language_name_to_code(
     path: impl AsRef<Path>,
-) -> Result<HashMap<String, Rc<String>>> {
+) -> Result<HashMap<String, String>> {
     let path = path.as_ref();
     let language_name_to_code = std::fs::read_to_string(path)
         .map_err(|e| Error::io_error("read from", path, e))?;
@@ -39,56 +32,34 @@ fn get_language_name_to_code(
         .enumerate()
         .filter(|(_, line)| *line != "")
         .map(|(i, line)| {
-            let mut splitter = line.split('\t');
-            match (splitter.next(), splitter.next()) {
-                (Some(name), Some(code)) => {
-                    if matches!(splitter.next(), None) {
-                        Ok((name.into(), Rc::new(code.into())))
-                    } else {
-                        Err(Error::NotTwoTabs {
-                            path: path.into(),
-                            line_number: i + 1,
-                            line: line.into(),
-                            tabs: splitter.count() + 3,
-                        })
-                    }
-                }
-                (Some(_), None) => Err(Error::NotTwoTabs {
+            let mut splitter = line.splitn(2, '\t');
+            let (first, second) = (splitter.next(), splitter.next());
+            if let (Some(name), Some(code)) = (first, second) {
+                Ok((name.into(), code.into()))
+            } else {
+                Err(Error::InvalidNameToCodeFormat {
                     path: path.into(),
                     line: line.into(),
                     line_number: i + 1,
-                    tabs: 1,
-                }),
-                (None, None) => Err(Error::NotTwoTabs {
-                    path: path.into(),
-                    line: line.into(),
-                    line_number: i + 1,
-                    tabs: 0,
-                }),
-                // `std::slice::Split` is a `std::iter::FusedIterator`,
-                // which will not yield `Some(_)` after yielding `None`
-                _ => unsafe { unreachable_unchecked() },
+                })
             }
         })
         .collect()
 }
 
-fn make_entry_index(
-    output_directory: impl AsRef<Path>,
+fn make_entry_index<'a>(
+    output_dir: impl AsRef<Path>,
     pages_articles_path: impl AsRef<Path>,
-    language_name_to_code_path: impl AsRef<Path>,
-) -> Result<HashMap<Rc<String>, Vec<Rc<UniCase<String>>>>> {
-    let output_directory = output_directory.as_ref();
-    check_output_directory(output_directory)?;
+    language_name_to_code: &'a HashMap<String, String>,
+) -> Result<LanguagesToEntries<'a>> {
+    let output_dir = output_dir.as_ref();
+    check_output_dir(output_dir)?;
     let pages_articles_path = pages_articles_path.as_ref();
     let dump_file = File::open(pages_articles_path)
         .map_err(|e| Error::io_error("open", pages_articles_path, e))?;
-    let language_name_to_code =
-        get_language_name_to_code(language_name_to_code_path)?;
     let configuration = wiktionary_configuration();
     let dump_file = BufReader::new(dump_file);
-    let mut languages_to_entries =
-        HashMap::<Rc<String>, Vec<Rc<UniCase<String>>>>::new();
+    let mut languages_to_entries = HashMap::new();
     for parse_result in parse_mediawiki_dump::parse(dump_file) {
         if let Page {
             title,
@@ -97,7 +68,7 @@ fn make_entry_index(
             ..
         } = parse_result?
         {
-            let title = Rc::new(UniCase::new(title.into()));
+            let title = UniCase::new(String::from(title));
             // This only checks top-level header nodes.
             // We need to recurse if any level-2 headers are at lower levels.
             for node in configuration.parse(&text).nodes {
@@ -110,9 +81,9 @@ fn make_entry_index(
                         language_name_to_code.get(language_name)
                     {
                         languages_to_entries
-                            .entry(Rc::clone(language_code))
+                            .entry(language_code)
                             .or_insert_with(Vec::new)
-                            .push(Rc::clone(&title));
+                            .push(title.clone());
                     } else {
                         eprintln!(
                             "language name {} in {} not recognized",
@@ -127,12 +98,12 @@ fn make_entry_index(
 }
 
 fn print_entries(
-    languages_to_entries: HashMap<Rc<String>, Vec<Rc<UniCase<String>>>>,
-    output_directory: impl AsRef<Path>,
+    languages_to_entries: LanguagesToEntries,
+    output_dir: impl AsRef<Path>,
 ) -> Result<()> {
-    let output_directory = output_directory.as_ref();
+    let output_dir = output_dir.as_ref();
     for (language_code, mut entries) in languages_to_entries {
-        let mut path = output_directory.join(language_code.as_str());
+        let mut path = output_dir.join(language_code.as_str());
         path.set_extension("txt");
         let output_file = File::create(&path)
             .map_err(|e| Error::io_error("create", &path, e))?;
@@ -146,14 +117,26 @@ fn print_entries(
     Ok(())
 }
 
-fn main() {
-    let output_directory: &Path = "entries".as_ref();
+fn main_with_result(
+    output_dir: impl AsRef<Path>,
+    pages_articles_path: impl AsRef<Path>,
+    language_name_to_code_path: impl AsRef<Path>,
+) -> Result<()> {
+    let output_dir: &Path = output_dir.as_ref();
+    let language_name_to_code = get_language_name_to_code(language_name_to_code_path)?;
     let languages_to_entries = make_entry_index(
-        output_directory,
-        "pages-articles.xml",
-        "name_to_code.txt",
-    )
-    .unwrap_or_else(|e| exit_with_error!("{}", e));
-    print_entries(languages_to_entries, output_directory)
-        .unwrap_or_else(|e| exit_with_error!("{}", e));
+        output_dir,
+        pages_articles_path,
+        &language_name_to_code,
+    )?;
+    print_entries(languages_to_entries, output_dir)?;
+    Ok(())
+}
+
+fn main() {
+    main_with_result("entries", "pages-articles.xml", "name_to_code.txt")
+        .unwrap_or_else(|e| {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        });
 }

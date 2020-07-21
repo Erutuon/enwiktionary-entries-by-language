@@ -10,11 +10,10 @@ pub enum Error {
         path: PathBuf,
         cause: IoError,
     },
-    NotTwoTabs {
+    InvalidNameToCodeFormat {
         path: PathBuf,
         line_number: usize,
         line: String,
-        tabs: usize,
     },
     DumpParsingError(DumpParsingError),
 }
@@ -33,26 +32,18 @@ impl Error {
     }
 }
 
-impl From<DumpParsingError> for Error {
-    fn from(e: DumpParsingError) -> Self {
-        Error::DumpParsingError(e)
-    }
-}
-
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::NotTwoTabs {
+            Error::InvalidNameToCodeFormat {
                 path,
                 line_number,
                 line,
-                tabs,
             } => write!(
                 f,
-                "line #{} in {} contained {} tabs, one expected: {}",
+                "line #{} in {} did not contain a language name, a tab, and a language code: {}",
                 line_number,
                 path.display(),
-                tabs,
                 line
             ),
             Error::DumpParsingError(e) => {
@@ -66,5 +57,11 @@ impl Display for Error {
                 write!(f, "failed to {} {}: {}", action, path.display(), cause)
             }
         }
+    }
+}
+
+impl From<DumpParsingError> for Error {
+    fn from(e: DumpParsingError) -> Self {
+        Error::DumpParsingError(e)
     }
 }
