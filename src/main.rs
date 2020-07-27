@@ -1,15 +1,18 @@
 use dump_parser::Page;
 use dump_parser::{wiktionary_configuration, Node, Positioned};
 use std::{
+    fmt::Display,
     fs::File,
     io::{BufReader, BufWriter, Write},
     path::Path,
+    result::Result as StdResult,
 };
 
 mod error;
 mod types;
 
 use error::{Error, Result};
+use getopts::{Fail, Options};
 use types::{LanguageNameToCode, LanguagesToEntries};
 
 macro_rules! log {
@@ -55,7 +58,8 @@ fn make_entry_index(
                     } else {
                         log!(
                             "language name {} in {} not recognized",
-                            language_name, &title
+                            language_name,
+                            &title
                         );
                     }
                 }
@@ -117,10 +121,126 @@ fn main_with_result<L: AsRef<Path>, P: AsRef<Path>, O: AsRef<Path>>(
     Ok(())
 }
 
+enum Args {
+    Help {
+        program: String,
+        options: Options,
+    },
+    Parse {
+        language_name_to_code_path: String,
+        pages_articles_path: String,
+        entries_dir: String,
+    },
+}
+
+enum ArgParseError {
+    Fail(Fail),
+    MissingArgs(Vec<&'static str>),
+    MissingProgram,
+}
+
+impl Display for ArgParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ArgParseError::Fail(e) => e.fmt(f),
+            ArgParseError::MissingArgs(args) => {
+                write!(f, "missing arguments: {}", args.join(", "))
+            }
+            ArgParseError::MissingProgram => write!(f, "missing program name"),
+        }
+    }
+}
+
+impl From<Fail> for ArgParseError {
+    fn from(e: Fail) -> Self {
+        ArgParseError::Fail(e)
+    }
+}
+
+macro_rules! get_multiple_opts {
+    (
+        $options:ident
+        $enum:ident :: $variant:ident {
+            $(
+                $opt:literal => $name:ident
+            ),+
+            $(,)?
+        }
+    ) => {
+        let mut missing_options = Vec::new();
+        $(
+            let $name = $options.opt_str($opt);
+            if $name.is_none() {
+                missing_options.push($opt);
+            };
+        )+
+        if let ($(Some($name)),+) = ($($name),+) {
+            Ok($enum :: $variant {
+                $($name),+
+            })
+        } else {
+            Err(ArgParseError::MissingArgs(missing_options))
+        }
+    };
+}
+
+fn parse_args(
+    args: impl IntoIterator<Item = String>,
+) -> StdResult<Args, ArgParseError> {
+    let mut options = Options::new();
+    options.optopt(
+        "l",
+        "language-name-to-code",
+        "file containing lines of language name, tab, language code",
+        "FILE",
+    );
+    options.optopt("p", "pages-xml", "XML page dump file", "FILE");
+    options.optopt("o", "output-dir", "output directory", "DIR");
+    options.optflag("h", "help", "display this message");
+
+    let mut args = args.into_iter();
+    let program = args.next().ok_or(ArgParseError::MissingProgram)?;
+    let args: Vec<_> = args.collect();
+
+    let matches = options.parse(&args)?;
+    if matches.opt_present("help") {
+        Ok(Args::Help { program, options })
+    } else {
+        get_multiple_opts! {
+            matches
+            Args::Parse {
+                "language-name-to-code" => language_name_to_code_path,
+                "pages-xml" => pages_articles_path,
+                "output-dir" => entries_dir,
+            }
+        }
+    }
+}
+
 fn main() {
-    main_with_result("name_to_code.txt", "pages-articles.xml", "entries")
-        .unwrap_or_else(|e| {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        });
+    let args = parse_args(std::env::args()).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    });
+    match args {
+        Args::Help { program, options } => print!(
+            "{}",
+            options.usage(&format!("Usage: {} [options]", program))
+        ),
+        Args::Parse {
+            language_name_to_code_path,
+            pages_articles_path,
+            entries_dir,
+        } => {
+            main_with_result(
+                language_name_to_code_path,
+                pages_articles_path,
+                entries_dir,
+            )
+            .unwrap_or_else(|e| {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            });
+        }
+    }
 }
