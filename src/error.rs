@@ -15,6 +15,11 @@ pub enum Error {
         line_number: usize,
         line: String,
     },
+    InvalidLanguageCode {
+        path: PathBuf,
+        line_number: usize,
+        line: String,
+    },
     DumpParsingError(DumpParsingError),
 }
 
@@ -42,6 +47,17 @@ impl Display for Error {
             } => write!(
                 f,
                 "line #{} in {} did not contain a language name, a tab, and a language code: {}",
+                line_number,
+                path.display(),
+                line
+            ),
+            Error::InvalidLanguageCode {
+                path,
+                line_number,
+                line,
+            } => write!(
+                f,
+                "line #{} in {} contained an invalid language code: {}",
                 line_number,
                 path.display(),
                 line
