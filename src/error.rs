@@ -1,4 +1,4 @@
-use parse_mediawiki_dump::Error as DumpParsingError;
+use dump_parser::Error as DumpParsingError;
 use std::{fmt::Display, io::Error as IoError, path::PathBuf};
 
 pub type Result<T> = std::result::Result<T, Error>;

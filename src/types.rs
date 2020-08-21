@@ -43,7 +43,7 @@ impl LanguageCode {
             None
         } else {
             let mut data = [0u8; Self::MAX];
-            &mut data[..code.len()].copy_from_slice(code.as_bytes());
+            data[..code.len()].copy_from_slice(code.as_bytes());
             let len = code.len() as u8;
             Some(Self { data, len })
         }

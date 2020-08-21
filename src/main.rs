@@ -1,5 +1,6 @@
-use dump_parser::Page;
-use dump_parser::{wiktionary_configuration, Node, Positioned};
+use dump_parser::{
+    wiktionary_configuration, Namespace, Node, Page, Positioned,
+};
 use std::{
     fmt::Display,
     fs::File,
@@ -21,11 +22,6 @@ macro_rules! log {
     };
 }
 
-type Namespace = u32; // should be i32
-const MAINSPACE: Namespace = 0;
-const APPENDIX_NAMESPACE: Namespace = 100;
-const RECONSTRUCTION_NAMESPACE: Namespace = 118;
-
 fn make_entry_index(
     pages_articles_path: &Path,
     language_name_to_code: &LanguageNameToCode,
@@ -35,14 +31,14 @@ fn make_entry_index(
     let configuration = wiktionary_configuration();
     let dump_file = BufReader::new(dump_file);
     let mut languages_to_entries = LanguagesToEntries::new();
-    for parse_result in parse_mediawiki_dump::parse(dump_file) {
+    for parse_result in dump_parser::parse(dump_file) {
         let Page {
             title,
             text,
             namespace,
             ..
         } = parse_result?;
-        if namespace == MAINSPACE {
+        if namespace == Namespace::Main {
             // This only checks top-level header nodes.
             // We need to recurse if any level-2 headers are at lower levels.
             for node in configuration.parse(&text).nodes {
@@ -64,20 +60,21 @@ fn make_entry_index(
                     }
                 }
             }
-        } else if namespace == APPENDIX_NAMESPACE
-            || namespace == RECONSTRUCTION_NAMESPACE
+        } else if namespace == Namespace::Appendix
+            || namespace == Namespace::Reconstruction
         {
-            if let Some(Some(Some(language_code))) =
-                title.split(':').nth(1).map(|title_after_namespace| {
-                    title_after_namespace.split('/').next().map(
-                        |language_name| {
-                            language_name_to_code.get(language_name)
-                        },
-                    )
+            if let Some(language_code) = title
+                .split(':')
+                .nth(1)
+                .and_then(|title_after_namespace| {
+                    title_after_namespace.split('/').next()
+                })
+                .and_then(|language_name| {
+                    language_name_to_code.get(language_name)
                 })
             {
                 languages_to_entries.push(*language_code, &title);
-            } else if namespace == RECONSTRUCTION_NAMESPACE {
+            } else if namespace == Namespace::Reconstruction {
                 log!("valid language name not found in title {}", title);
             }
         }

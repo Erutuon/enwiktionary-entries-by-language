@@ -9,6 +9,5 @@ edition = "2018"
 [dependencies]
 dump_parser = { path = "../enwikt-dump-rs/dump_parser" }
 getopts = "0.2"
-parse_mediawiki_dump = "0.1"
 smartstring = "0.2"
 unicase = "2.6"
